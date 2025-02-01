@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, Plus, CheckCircle, XCircle } from "lucide-react";
+import { Loader2, Plus, CheckCircle, XCircle, Plus as PlusIcon } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+interface WebhookParameter {
+  name: string;
+  value: string;
+}
 
 const Dashboard = () => {
   const [newWebhook, setNewWebhook] = useState({ name: '', url: '' });
+  const [parameters, setParameters] = useState<WebhookParameter[]>([]);
+  const [lastWebhookResponse, setLastWebhookResponse] = useState<string>('');
   const { toast } = useToast();
 
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useQuery({
@@ -50,12 +58,77 @@ const Dashboard = () => {
     },
   });
 
+  const addParameter = () => {
+    setParameters([...parameters, { name: '', value: '' }]);
+  };
+
+  const updateParameter = (index: number, field: 'name' | 'value', value: string) => {
+    const newParameters = [...parameters];
+    newParameters[index][field] = value;
+    setParameters(newParameters);
+  };
+
+  const removeParameter = (index: number) => {
+    setParameters(parameters.filter((_, i) => i !== index));
+  };
+
+  const testWebhook = async (webhookUrl: string) => {
+    try {
+      const payload = Object.fromEntries(
+        parameters.map(param => [param.name, param.value])
+      );
+
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await response.text();
+      setLastWebhookResponse(data);
+      
+      toast({
+        title: "Success",
+        description: "Webhook tested successfully!",
+      });
+
+      // Log the webhook test
+      await supabase.from('webhook_logs').insert({
+        webhook_id: webhooks?.[0]?.id,
+        status: 'success',
+        request_payload: payload,
+        response_payload: { response: data },
+      });
+
+      refetchWebhooks();
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to test webhook",
+        variant: "destructive"
+      });
+
+      // Log the error
+      await supabase.from('webhook_logs').insert({
+        webhook_id: webhooks?.[0]?.id,
+        status: 'error',
+        request_payload: Object.fromEntries(parameters.map(param => [param.name, param.value])),
+        error_message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       const { error } = await supabase
         .from('webhook_configs')
-        .insert([newWebhook]);
+        .insert([{
+          ...newWebhook,
+          parameters: parameters
+        }]);
 
       if (error) throw error;
 
@@ -64,6 +137,7 @@ const Dashboard = () => {
         description: "Webhook configuration added successfully!",
       });
       setNewWebhook({ name: '', url: '' });
+      setParameters([]);
       refetchWebhooks();
     } catch (error) {
       toast({
@@ -73,6 +147,32 @@ const Dashboard = () => {
       });
     }
   };
+
+  // Set up real-time listener for webhook events
+  useEffect(() => {
+    const channel = supabase
+      .channel('webhook-events')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'webhook_logs'
+        },
+        (payload) => {
+          toast({
+            title: "New Webhook Event",
+            description: `Status: ${payload.new.status}`,
+            variant: payload.new.status === 'success' ? 'default' : 'destructive'
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [toast]);
 
   return (
     <div className="container mx-auto p-6 space-y-8">
@@ -102,11 +202,61 @@ const Dashboard = () => {
               required
             />
           </div>
+
+          {/* Parameters Section */}
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <Label>Parameters</Label>
+              <Button type="button" variant="outline" size="sm" onClick={addParameter}>
+                <PlusIcon className="h-4 w-4 mr-2" />
+                Add Parameter
+              </Button>
+            </div>
+            {parameters.map((param, index) => (
+              <div key={index} className="flex gap-4">
+                <div className="flex-1">
+                  <Input
+                    placeholder="Parameter name"
+                    value={param.name}
+                    onChange={(e) => updateParameter(index, 'name', e.target.value)}
+                  />
+                </div>
+                <div className="flex-1">
+                  <Input
+                    placeholder="Parameter value"
+                    value={param.value}
+                    onChange={(e) => updateParameter(index, 'value', e.target.value)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  onClick={() => removeParameter(index)}
+                >
+                  <XCircle className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
           <Button type="submit" className="w-full">
             <Plus className="mr-2 h-4 w-4" /> Add Webhook
           </Button>
         </form>
       </Card>
+
+      {/* Webhook Response */}
+      {lastWebhookResponse && (
+        <Card className="p-6">
+          <h2 className="text-2xl font-semibold mb-4">Last Webhook Response</h2>
+          <Alert>
+            <AlertDescription>
+              <pre className="whitespace-pre-wrap">{lastWebhookResponse}</pre>
+            </AlertDescription>
+          </Alert>
+        </Card>
+      )}
 
       {/* Webhooks List */}
       <Card className="p-6">
@@ -122,6 +272,7 @@ const Dashboard = () => {
                 <TableHead>Name</TableHead>
                 <TableHead>URL</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Actions</TableHead>
                 <TableHead>Created At</TableHead>
               </TableRow>
             </TableHeader>
@@ -136,6 +287,15 @@ const Dashboard = () => {
                     ) : (
                       <XCircle className="h-5 w-5 text-red-500" />
                     )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testWebhook(webhook.url)}
+                    >
+                      Test Webhook
+                    </Button>
                   </TableCell>
                   <TableCell>
                     {new Date(webhook.created_at).toLocaleDateString()}

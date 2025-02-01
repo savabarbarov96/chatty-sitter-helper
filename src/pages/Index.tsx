@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Send, Upload, Loader2 } from "lucide-react";
+import { Send, Upload, Loader2, LayoutDashboard } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { useNavigate } from 'react-router-dom';
 
 const Index = () => {
   const [message, setMessage] = useState('');
@@ -11,6 +12,7 @@ const Index = () => {
   const [messages, setMessages] = useState<Array<{content: string, isAssistant: boolean}>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const navigate = useNavigate();
   const sendSound = new Audio('/send.mp3');
   const receiveSound = new Audio('/receive.mp3');
 
@@ -32,13 +34,6 @@ const Index = () => {
       setIsLoading(true);
 
       // TODO: Integrate with n8n webhook
-      // const response = await fetch('YOUR_N8N_WEBHOOK_URL', {
-      //   method: 'POST',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify({ message })
-      // });
-      
-      // Simulate AI response for now
       setTimeout(() => {
         receiveSound.play();
         setMessages(prev => [...prev, { 
@@ -82,6 +77,13 @@ const Index = () => {
           onClick={handleUpload}
         >
           <Upload className="mr-2 h-4 w-4" /> Upload
+        </Button>
+        <Button
+          variant="outline"
+          className="w-32 h-12 text-lg font-semibold hover:scale-105 transition-transform"
+          onClick={() => navigate('/dashboard')}
+        >
+          <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
         </Button>
       </div>
 
